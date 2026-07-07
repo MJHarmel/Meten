@@ -364,6 +364,8 @@ function AngleAnnotation({ item, w, h, selected, interactive, dimmed, onSelect, 
   const bisector = a1 + diff / 2;
   const labelX = vx + (R + 20) * Math.cos(bisector);
   const labelY = vy + (R + 20) * Math.sin(bisector);
+  const hasValue = item.value && item.value.toString().trim() !== "";
+  const displayText = hasValue ? `${item.value}°` : "?";
 
   const mkHead = (bx, by, ang) => {
     const dirx = Math.cos(ang), diry = Math.sin(ang);
@@ -384,7 +386,7 @@ function AngleAnnotation({ item, w, h, selected, interactive, dimmed, onSelect, 
       <polygon points={mkHead(x1, y1, a1)} fill={color} />
       <polygon points={mkHead(x2, y2, a2)} fill={color} />
       <polyline points={arcPts.join(" ")} fill="none" stroke={color} strokeWidth={1.5} />
-      <AnnoLabel x={labelX} y={labelY} angleDeg={0} text={`${deg.toFixed(1)}°`} sub={item.label} color={color} />
+      <AnnoLabel x={labelX} y={labelY} angleDeg={0} text={displayText} sub={item.label} color={color} />
       {interactive && (
         <>
           <Handle x={vx} y={vy} cursor="move" onDown={(e) => { e.stopPropagation(); onHandleDown("v", e); }} color="#8fd3ff" />
@@ -613,6 +615,7 @@ function Editor({ project, onBack, onChange }) {
   const [tool, setTool] = useState(null); // null | 'line' | 'curve' | 'angle' | 'text'
   const [selectedId, setSelectedId] = useState(null);
   const [draft, setDraft] = useState(null);
+  const [pending, setPending] = useState(null); // tussenstatus voor curve/hoek (fase 1 klaar, wacht op fase 2)
   const [containerSize, setContainerSize] = useState({ w: 0, h: 0 });
   const [imgBox, setImgBox] = useState({ left: 0, top: 0, w: 0, h: 0 });
   const [magPoint, setMagPoint] = useState(null);
@@ -692,6 +695,19 @@ function Editor({ project, onBack, onChange }) {
       const newItem = { id: uid(), type: "text", x: p.x, y: p.y, text: "" };
       setItems((arr) => [...arr, newItem]);
       setSelectedId(newItem.id);
+      setTool(null);
+      return;
+    }
+    if (pending && pending.type === "angle") {
+      // fase 2: tweede lijn, vast verankerd aan hetzelfde hoekpunt
+      setDraft({ x1: pending.vx, y1: pending.vy, x2: p.x, y2: p.y });
+      setMagPoint({ x: p.x, y: p.y });
+      return;
+    }
+    if (pending && pending.type === "curve") {
+      // fase 2: het punt waar de curve doorheen moet buigen
+      setDraft({ x1: p.x, y1: p.y, x2: p.x, y2: p.y });
+      setMagPoint({ x: p.x, y: p.y });
       return;
     }
     setDraft({ x1: p.x, y1: p.y, x2: p.x, y2: p.y });
@@ -712,35 +728,43 @@ function Editor({ project, onBack, onChange }) {
 
   const onPointerUp = (e) => {
     if (!draft) return;
-    const p = { x: draft.x2, y: draft.y2 };
     const start = startRef.current;
-    const distPx = start ? Math.hypot((p.x - start.x) * imgBox.w, (p.y - start.y) * imgBox.h) : 0;
+    const distPx = start ? Math.hypot((draft.x2 - start.x) * imgBox.w, (draft.y2 - start.y) * imgBox.h) : 0;
 
-    if (distPx > 20) {
-      if (tool === "line") {
+    if (tool === "line") {
+      if (distPx > 20) {
         const it = { id: uid(), type: "line", x1: draft.x1, y1: draft.y1, x2: draft.x2, y2: draft.y2, value: "", unit: "cm", label: "" };
         setItems((arr) => [...arr, it]);
         setSelectedId(it.id);
-      } else if (tool === "curve") {
-        const x1px = draft.x1 * imgBox.w, y1px = draft.y1 * imgBox.h;
-        const x2px = draft.x2 * imgBox.w, y2px = draft.y2 * imgBox.h;
-        const chordAngle = Math.atan2(y2px - y1px, x2px - x1px);
-        const perpx = -Math.sin(chordAngle), perpy = Math.cos(chordAngle);
-        const bulge = 22;
-        const cxpx = (x1px + x2px) / 2 + perpx * bulge;
-        const cypx = (y1px + y2px) / 2 + perpy * bulge;
-        const it = { id: uid(), type: "curve", x1: draft.x1, y1: draft.y1, x2: draft.x2, y2: draft.y2, cx: cxpx / imgBox.w, cy: cypx / imgBox.h, value: "", unit: "cm", label: "" };
+        setTool(null);
+      }
+    } else if (tool === "curve") {
+      if (!pending) {
+        // fase 1 klaar: begin- en eindpunt bekend, wacht op het buigpunt
+        if (distPx > 20) setPending({ type: "curve", x1: draft.x1, y1: draft.y1, x2: draft.x2, y2: draft.y2 });
+      } else {
+        // fase 2 klaar: bereken het bezier-controlepunt zodat de curve exact door dit punt loopt
+        const p0x = pending.x1 * imgBox.w, p0y = pending.y1 * imgBox.h;
+        const p2x = pending.x2 * imgBox.w, p2y = pending.y2 * imgBox.h;
+        const mx = draft.x2 * imgBox.w, my = draft.y2 * imgBox.h;
+        const cxpx = 2 * mx - 0.5 * (p0x + p2x);
+        const cypx = 2 * my - 0.5 * (p0y + p2y);
+        const it = { id: uid(), type: "curve", x1: pending.x1, y1: pending.y1, x2: pending.x2, y2: pending.y2, cx: cxpx / imgBox.w, cy: cypx / imgBox.h, value: "", unit: "cm", label: "" };
         setItems((arr) => [...arr, it]);
         setSelectedId(it.id);
-      } else if (tool === "angle") {
-        const vxpx = draft.x1 * imgBox.w, vypx = draft.y1 * imgBox.h;
-        const e1xpx = draft.x2 * imgBox.w, e1ypx = draft.y2 * imgBox.h;
-        const dx = e1xpx - vxpx, dy = e1ypx - vypx;
-        // tweede straal: zelfde lengte, 90 graden gedraaid
-        const e2xpx = vxpx - dy, e2ypx = vypx + dx;
-        const it = { id: uid(), type: "angle", vx: draft.x1, vy: draft.y1, x1: draft.x2, y1: draft.y2, x2: e2xpx / imgBox.w, y2: e2ypx / imgBox.h, label: "" };
+        setPending(null);
+        setTool(null);
+      }
+    } else if (tool === "angle") {
+      if (!pending) {
+        // fase 1 klaar: hoekpunt + eerste lijn bekend, wacht op de tweede lijn
+        if (distPx > 20) setPending({ type: "angle", vx: draft.x1, vy: draft.y1, x1: draft.x2, y1: draft.y2 });
+      } else if (distPx > 20) {
+        const it = { id: uid(), type: "angle", vx: pending.vx, vy: pending.vy, x1: pending.x1, y1: pending.y1, x2: draft.x2, y2: draft.y2, value: "", label: "" };
         setItems((arr) => [...arr, it]);
         setSelectedId(it.id);
+        setPending(null);
+        setTool(null);
       }
     }
     setDraft(null);
@@ -840,6 +864,8 @@ function Editor({ project, onBack, onChange }) {
   const toggleTool = (key) => {
     setTool((t) => (t === key ? null : key));
     setSelectedId(null);
+    setPending(null);
+    setDraft(null);
   };
 
   return (
@@ -876,19 +902,27 @@ function Editor({ project, onBack, onChange }) {
               onPointerCancel={() => { onHandleUp(); setDraft(null); setMagPoint(null); }}
             >
               {items.filter((i) => i.type === "line").map((it) => (
-                <LineAnnotation key={it.id} item={it} w={imgBox.w} h={imgBox.h} selected={it.id === selectedId} interactive={!tool && it.id === selectedId} dimmed={!tool && selectedId && it.id !== selectedId} onSelect={() => { if (!tool) setSelectedId(it.id); }} onHandleDown={(k, e) => onHandleDown(it.id, k, e)} />
+                <LineAnnotation key={it.id} item={it} w={imgBox.w} h={imgBox.h} selected={it.id === selectedId} interactive={it.id === selectedId} dimmed={selectedId && it.id !== selectedId} onSelect={() => setSelectedId(it.id)} onHandleDown={(k, e) => onHandleDown(it.id, k, e)} />
               ))}
               {items.filter((i) => i.type === "curve").map((it) => (
-                <CurveAnnotation key={it.id} item={it} w={imgBox.w} h={imgBox.h} selected={it.id === selectedId} interactive={!tool && it.id === selectedId} dimmed={!tool && selectedId && it.id !== selectedId} onSelect={() => { if (!tool) setSelectedId(it.id); }} onHandleDown={(k, e) => onHandleDown(it.id, k, e)} />
+                <CurveAnnotation key={it.id} item={it} w={imgBox.w} h={imgBox.h} selected={it.id === selectedId} interactive={it.id === selectedId} dimmed={selectedId && it.id !== selectedId} onSelect={() => setSelectedId(it.id)} onHandleDown={(k, e) => onHandleDown(it.id, k, e)} />
               ))}
               {items.filter((i) => i.type === "angle").map((it) => (
-                <AngleAnnotation key={it.id} item={it} w={imgBox.w} h={imgBox.h} selected={it.id === selectedId} interactive={!tool && it.id === selectedId} dimmed={!tool && selectedId && it.id !== selectedId} onSelect={() => { if (!tool) setSelectedId(it.id); }} onHandleDown={(k, e) => onHandleDown(it.id, k, e)} />
+                <AngleAnnotation key={it.id} item={it} w={imgBox.w} h={imgBox.h} selected={it.id === selectedId} interactive={it.id === selectedId} dimmed={selectedId && it.id !== selectedId} onSelect={() => setSelectedId(it.id)} onHandleDown={(k, e) => onHandleDown(it.id, k, e)} />
               ))}
+              {pending && pending.type === "angle" && (
+                <line x1={pending.vx * imgBox.w} y1={pending.vy * imgBox.h} x2={pending.x1 * imgBox.w} y2={pending.y1 * imgBox.h} stroke="#8fd3ff" strokeWidth={2} />
+              )}
+              {pending && pending.type === "curve" && (
+                <line x1={pending.x1 * imgBox.w} y1={pending.y1 * imgBox.h} x2={pending.x2 * imgBox.w} y2={pending.y2 * imgBox.h} stroke="#ff8a3d" strokeWidth={1} strokeDasharray="3,4" opacity={0.5} />
+              )}
               {draft && tool !== "text" && (
-                tool === "curve" ? (
+                pending && pending.type === "curve" ? (
+                  <path d={`M ${pending.x1 * imgBox.w},${pending.y1 * imgBox.h} Q ${2 * draft.x2 * imgBox.w - 0.5 * (pending.x1 * imgBox.w + pending.x2 * imgBox.w)},${2 * draft.y2 * imgBox.h - 0.5 * (pending.y1 * imgBox.h + pending.y2 * imgBox.h)} ${pending.x2 * imgBox.w},${pending.y2 * imgBox.h}`} stroke="#ff8a3d" strokeWidth={2} strokeDasharray="6,4" fill="none" />
+                ) : tool === "curve" ? (
                   <path d={`M ${draft.x1 * imgBox.w},${draft.y1 * imgBox.h} L ${draft.x2 * imgBox.w},${draft.y2 * imgBox.h}`} stroke="#ff8a3d" strokeWidth={2} strokeDasharray="6,4" fill="none" />
                 ) : (
-                  <line x1={draft.x1 * imgBox.w} y1={draft.y1 * imgBox.h} x2={draft.x2 * imgBox.w} y2={draft.y2 * imgBox.h} stroke="#ff8a3d" strokeWidth={2} strokeDasharray="6,4" />
+                  <line x1={draft.x1 * imgBox.w} y1={draft.y1 * imgBox.h} x2={draft.x2 * imgBox.w} y2={draft.y2 * imgBox.h} stroke={tool === "angle" ? "#8fd3ff" : "#ff8a3d"} strokeWidth={2} strokeDasharray="6,4" />
                 )
               )}
             </svg>
@@ -896,7 +930,7 @@ function Editor({ project, onBack, onChange }) {
             <div style={{ position: "absolute", left: imgBox.left, top: imgBox.top, width: imgBox.w, height: imgBox.h, pointerEvents: "none" }}>
               {items.filter((i) => i.type === "text").map((it) => (
                 <div key={it.id} style={{ pointerEvents: "auto" }} onPointerMove={onTextDragMove} onPointerUp={onTextDragEnd} onPointerCancel={onTextDragEnd}>
-                  <TextBoxAnno item={it} imgBox={imgBox} selected={it.id === selectedId} dimmed={!tool && selectedId && it.id !== selectedId} onSelect={() => { if (!tool) setSelectedId(it.id); }} onDragStart={(e) => onTextDragStart(it, e)} />
+                  <TextBoxAnno item={it} imgBox={imgBox} selected={it.id === selectedId} dimmed={selectedId && it.id !== selectedId} onSelect={() => setSelectedId(it.id)} onDragStart={(e) => onTextDragStart(it, e)} />
                 </div>
               ))}
             </div>
@@ -906,7 +940,13 @@ function Editor({ project, onBack, onChange }) {
             {/* Bovenoverlay: hint tijdens tekenen, of anders de annotatielijst — nooit beide, dus geen verspringing */}
             {tool ? (
               <div style={styles.hintBarOverlay}>
-                {tool === "text" ? "Tik op de foto om een tekstvak te plaatsen" : "Sleep over de foto — blijft aan tot je opnieuw op het gereedschap tikt"}
+                {tool === "text"
+                  ? "Tik op de foto om een tekstvak te plaatsen"
+                  : tool === "angle"
+                  ? (pending ? "Sleep nu de tweede lijn vanaf hetzelfde hoekpunt" : "Sleep de eerste lijn vanaf het hoekpunt")
+                  : tool === "curve"
+                  ? (pending ? "Tik het punt aan waar de curve doorheen moet buigen" : "Sleep van begin- naar eindpunt")
+                  : "Sleep over de foto — blijft aan tot je opnieuw op het gereedschap tikt"}
               </div>
             ) : items.length > 0 ? (
               <div style={styles.chipRowOverlay}>
@@ -929,7 +969,7 @@ function Editor({ project, onBack, onChange }) {
             ) : null}
 
             {/* Bewerkpaneel: overlay onderin, beïnvloedt de fotogrootte niet */}
-            {selected && !tool && (
+            {selected && (
               <div style={styles.panelOverlay}>
                 {selected.type === "text" && (
                   <>
