@@ -1,7 +1,7 @@
 // Cache-versie: verhoog dit nummer bij een nieuwe deploy zodat de browser de
 // service worker als "gewijzigd" herkent en de nieuwe bestanden ophaalt i.p.v.
 // voor altijd de oude cache te blijven serveren.
-const CACHE_NAME = "meetfoto-cache-v2";
+const CACHE_NAME = "meetfoto-cache-v3";
 const STATIC_ASSETS = [
   "./manifest.json",
   "./icons/icon-192.png",
@@ -10,10 +10,25 @@ const STATIC_ASSETS = [
   "./icons/apple-touch-icon.png",
   "./icons/favicon-32.png",
 ];
+// De app-shell zelf apart precachen (met expliciete no-cache fetch) zodat er
+// al na het ALLEREERSTE bezoek een offline-fallback beschikbaar is — niet pas
+// na een tweede keer online laden.
+const APP_SHELL = ["./", "./index.html"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(STATIC_ASSETS)).catch(() => {})
+    (async () => {
+      const cache = await caches.open(CACHE_NAME);
+      await cache.addAll(STATIC_ASSETS).catch(() => {});
+      await Promise.all(
+        APP_SHELL.map(async (url) => {
+          try {
+            const resp = await fetch(url, { cache: "no-store" });
+            if (resp && resp.ok) await cache.put(url, resp.clone());
+          } catch (e) {}
+        })
+      );
+    })()
   );
   self.skipWaiting();
 });
@@ -43,7 +58,9 @@ self.addEventListener("fetch", (event) => {
           caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
           return response;
         })
-        .catch(() => caches.match(event.request))
+        .catch(() =>
+          caches.match(event.request).then((r) => r || caches.match("./index.html"))
+        )
     );
     return;
   }

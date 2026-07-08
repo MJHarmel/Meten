@@ -2,6 +2,7 @@
   "name": "Meetfoto's",
   "short_name": "Meetfoto's",
   "description": "Maak foto's van meubels en teken de maatvoering erin.",
+  "id": "./index.html",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
