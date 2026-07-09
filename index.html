@@ -1065,6 +1065,27 @@ function Editor({ project, onBack, onChange }) {
 function Gallery({ projects, onOpen, onCreate, onDelete, busy }) {
   const fileRef = useRef(null);
   const [confirmId, setConfirmId] = useState(null);
+  const [installAvailable, setInstallAvailable] = useState(!!window.__meetfotoInstallPrompt);
+  const [installed, setInstalled] = useState(window.matchMedia("(display-mode: standalone)").matches);
+  const [swReady, setSwReady] = useState(false);
+
+  useEffect(() => {
+    const onAvail = () => setInstallAvailable(!!window.__meetfotoInstallPrompt);
+    window.addEventListener("meetfoto-install-available", onAvail);
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.ready.then(() => setSwReady(true)).catch(() => {});
+    }
+    return () => window.removeEventListener("meetfoto-install-available", onAvail);
+  }, []);
+
+  const handleInstallClick = async () => {
+    const promptEvent = window.__meetfotoInstallPrompt;
+    if (!promptEvent) return;
+    promptEvent.prompt();
+    await promptEvent.userChoice;
+    window.__meetfotoInstallPrompt = null;
+    setInstallAvailable(false);
+  };
 
   return (
     <div style={styles.galleryRoot}>
@@ -1081,7 +1102,20 @@ function Gallery({ projects, onOpen, onCreate, onDelete, busy }) {
       <input ref={fileRef} type="file" accept="image/*" capture="environment" style={{ display: "none" }}
         onChange={(e) => { const f = e.target.files?.[0]; if (f) onCreate(f); e.target.value = ""; }} />
 
-      <p style={styles.homeTip}>Tip: zet deze pagina op je beginscherm (deel-icoon → "Zet op beginscherm") voor een vaste link naar je projecten.</p>
+      {installed ? (
+        <p style={styles.installOk}>✓ Geïnstalleerd als app — dit venster draait standalone.</p>
+      ) : installAvailable ? (
+        <button style={styles.installBtn} onClick={handleInstallClick}>
+          <Icon size={16} color="#10151f">⬇️</Icon>
+          <span style={{ marginLeft: 8 }}>App installeren op dit toestel</span>
+        </button>
+      ) : (
+        <p style={styles.homeTip}>
+          {swReady
+            ? "Nog niet installeerbaar aangeboden door Chrome. Ververs deze pagina eenmaal (pull-to-refresh) — de knop verschijnt hier zodra het kan."
+            : "Bezig met voorbereiden voor installatie… even geduld of ververs de pagina."}
+        </p>
+      )}
 
       {projects.length === 0 ? (
         <div style={styles.empty}>
@@ -1213,6 +1247,8 @@ const styles = {
   eyebrow: { fontSize: 11, letterSpacing: "0.16em", color: "#ff8a3d", fontWeight: 700, marginBottom: 2 },
   h1: { fontSize: 26, fontWeight: 800, margin: 0, letterSpacing: "-0.01em" },
   homeTip: { fontSize: 12, color: "#5c6a84", background: "#161d2b", border: "1px solid #232d40", borderRadius: 10, padding: "8px 12px", margin: "0 0 18px", lineHeight: 1.5 },
+  installBtn: { display: "flex", alignItems: "center", justifyContent: "center", width: "100%", background: "#ff8a3d", color: "#10151f", border: "none", borderRadius: 10, padding: "11px 14px", fontWeight: 700, fontSize: 13.5, cursor: "pointer", margin: "0 0 18px" },
+  installOk: { fontSize: 12, color: "#5fd0a0", background: "rgba(95,208,160,0.1)", border: "1px solid rgba(95,208,160,0.3)", borderRadius: 10, padding: "8px 12px", margin: "0 0 18px", lineHeight: 1.5 },
   fab: { width: 44, height: 44, borderRadius: 12, background: "#ff8a3d", border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" },
   grid: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(148px, 1fr))", gap: 14 },
   card: { background: "#1b2433", borderRadius: 14, overflow: "hidden", border: "1px solid #2a3448" },
@@ -1271,6 +1307,21 @@ function setRealViewportHeight() {
 setRealViewportHeight();
 window.addEventListener("resize", setRealViewportHeight);
 window.addEventListener("orientationchange", () => setTimeout(setRealViewportHeight, 100));
+
+// Vangt Chrome's eigen installatie-aanbod op (i.p.v. via browsermenu's te zoeken).
+// Dit event vuurt alleen als de site daadwerkelijk aan alle PWA-installatie-eisen
+// voldoet (manifest + geldige iconen + werkende service worker) — als dit event
+// nooit binnenkomt, weten we zeker dat er nog iets aan de installeerbaarheid mankeert.
+window.__meetfotoInstallPrompt = null;
+window.addEventListener("beforeinstallprompt", (e) => {
+  e.preventDefault();
+  window.__meetfotoInstallPrompt = e;
+  window.dispatchEvent(new Event("meetfoto-install-available"));
+});
+window.addEventListener("appinstalled", () => {
+  window.__meetfotoInstallPrompt = null;
+  window.dispatchEvent(new Event("meetfoto-install-available"));
+});
 
 const root = ReactDOM.createRoot(document.getElementById("root"));
 root.render(<App />);
