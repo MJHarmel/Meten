@@ -4,11 +4,11 @@
 const CACHE_NAME = "meetfoto-cache-v4";
 const STATIC_ASSETS = [
   "./manifest.json",
-  "./icons/icon-192.png",
-  "./icons/icon-512.png",
-  "./icons/icon-maskable-512.png",
-  "./icons/apple-touch-icon.png",
-  "./icons/favicon-32.png",
+  "./icon/icon-192.png",
+  "./icon/icon-512.png",
+  "./icon/icon-maskable-512.png",
+  "./icon/apple-touch-icon.png",
+  "./icon/favicon-32.png",
 ];
 // De app-shell zelf apart precachen (met expliciete no-cache fetch) zodat er
 // al na het ALLEREERSTE bezoek een offline-fallback beschikbaar is — niet pas
