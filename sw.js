@@ -1,7 +1,7 @@
 // Cache-versie: verhoog dit nummer bij een nieuwe deploy zodat de browser de
 // service worker als "gewijzigd" herkent en de nieuwe bestanden ophaalt i.p.v.
 // voor altijd de oude cache te blijven serveren.
-const CACHE_NAME = "meetfoto-cache-v3";
+const CACHE_NAME = "meetfoto-cache-v4";
 const STATIC_ASSETS = [
   "./manifest.json",
   "./icons/icon-192.png",
