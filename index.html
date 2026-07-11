@@ -1081,6 +1081,9 @@ function Gallery({ projects, onOpen, onCreate, onDelete, busy }) {
   const [installAvailable, setInstallAvailable] = useState(!!window.__meetfotoInstallPrompt);
   const [installed, setInstalled] = useState(window.matchMedia("(display-mode: standalone)").matches);
   const [swReady, setSwReady] = useState(false);
+  const [showDiag, setShowDiag] = useState(false);
+  const [diag, setDiag] = useState(null);
+  const [diagLoading, setDiagLoading] = useState(false);
 
   useEffect(() => {
     const onAvail = () => setInstallAvailable(!!window.__meetfotoInstallPrompt);
@@ -1098,6 +1101,34 @@ function Gallery({ projects, onOpen, onCreate, onDelete, busy }) {
     await promptEvent.userChoice;
     window.__meetfotoInstallPrompt = null;
     setInstallAvailable(false);
+  };
+
+  const runDiagnose = async () => {
+    setDiagLoading(true);
+    try {
+      const hasSW = "serviceWorker" in navigator;
+      const reg = hasSW ? await navigator.serviceWorker.getRegistration() : null;
+      const controller = hasSW ? navigator.serviceWorker.controller : null;
+      const cacheNames = "caches" in window ? await caches.keys() : [];
+      const cacheDetails = [];
+      for (const name of cacheNames) {
+        const cache = await caches.open(name);
+        const reqs = await cache.keys();
+        cacheDetails.push({ name, urls: reqs.map((r) => r.url.replace(location.origin, "")) });
+      }
+      setDiag({
+        swSupported: hasSW,
+        swRegistered: !!reg,
+        swScope: reg ? reg.scope : null,
+        swActiveState: reg && reg.active ? reg.active.state : "geen",
+        controllerActief: !!controller,
+        cacheDetails,
+      });
+    } catch (e) {
+      setDiag({ error: String(e) });
+    } finally {
+      setDiagLoading(false);
+    }
   };
 
   return (
@@ -1128,6 +1159,42 @@ function Gallery({ projects, onOpen, onCreate, onDelete, busy }) {
             ? "Nog niet installeerbaar aangeboden door Chrome. Ververs deze pagina eenmaal (pull-to-refresh) — de knop verschijnt hier zodra het kan."
             : "Bezig met voorbereiden voor installatie… even geduld of ververs de pagina."}
         </p>
+      )}
+
+      <button
+        style={styles.diagToggle}
+        onClick={() => { setShowDiag((s) => !s); if (!showDiag) runDiagnose(); }}
+      >
+        {showDiag ? "▾" : "▸"} Diagnose offline-status
+      </button>
+      {showDiag && (
+        <div style={styles.diagBox}>
+          {diagLoading && <p style={styles.diagLine}>Bezig met controleren…</p>}
+          {diag && !diagLoading && (
+            diag.error ? (
+              <p style={styles.diagLine}>Fout: {diag.error}</p>
+            ) : (
+              <>
+                <p style={styles.diagLine}>Service worker ondersteund: <b>{diag.swSupported ? "ja" : "nee"}</b></p>
+                <p style={styles.diagLine}>Service worker geregistreerd: <b>{diag.swRegistered ? "ja" : "nee"}</b></p>
+                <p style={styles.diagLine}>Actieve staat: <b>{diag.swActiveState}</b></p>
+                <p style={styles.diagLine}>Deze pagina bestuurd door SW: <b>{diag.controllerActief ? "ja" : "nee — herlaad de pagina"}</b></p>
+                <p style={styles.diagLine}>Scope: <b>{diag.swScope || "—"}</b></p>
+                <p style={{ ...styles.diagLine, marginTop: 8, fontWeight: 700 }}>Gecachete bestanden:</p>
+                {diag.cacheDetails.length === 0 && <p style={styles.diagLine}>— niets gecachet —</p>}
+                {diag.cacheDetails.map((c) => (
+                  <div key={c.name} style={{ marginBottom: 6 }}>
+                    <p style={{ ...styles.diagLine, color: "#ff8a3d" }}>{c.name} ({c.urls.length})</p>
+                    {c.urls.map((u) => (
+                      <p key={u} style={{ ...styles.diagLine, paddingLeft: 10 }}>• {u}</p>
+                    ))}
+                  </div>
+                ))}
+              </>
+            )
+          )}
+          <button style={styles.diagRefreshBtn} onClick={runDiagnose}>↻ Opnieuw controleren</button>
+        </div>
       )}
 
       {projects.length === 0 ? (
@@ -1262,6 +1329,10 @@ const styles = {
   homeTip: { fontSize: 12, color: "#5c6a84", background: "#161d2b", border: "1px solid #232d40", borderRadius: 10, padding: "8px 12px", margin: "0 0 18px", lineHeight: 1.5 },
   installBtn: { display: "flex", alignItems: "center", justifyContent: "center", width: "100%", background: "#ff8a3d", color: "#10151f", border: "none", borderRadius: 10, padding: "11px 14px", fontWeight: 700, fontSize: 13.5, cursor: "pointer", margin: "0 0 18px" },
   installOk: { fontSize: 12, color: "#5fd0a0", background: "rgba(95,208,160,0.1)", border: "1px solid rgba(95,208,160,0.3)", borderRadius: 10, padding: "8px 12px", margin: "0 0 18px", lineHeight: 1.5 },
+  diagToggle: { display: "block", background: "none", border: "none", color: "#5c6a84", fontSize: 12, padding: "0 0 10px", cursor: "pointer", textAlign: "left" },
+  diagBox: { background: "#0c1119", border: "1px solid #232d40", borderRadius: 10, padding: "10px 12px", marginBottom: 18, maxHeight: 260, overflowY: "auto" },
+  diagLine: { fontSize: 11, color: "#c7cedb", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", margin: "2px 0", wordBreak: "break-all" },
+  diagRefreshBtn: { marginTop: 8, background: "rgba(255,255,255,0.08)", border: "none", color: "#c7cedb", fontSize: 11, borderRadius: 6, padding: "6px 10px", cursor: "pointer" },
   fab: { width: 44, height: 44, borderRadius: 12, background: "#ff8a3d", border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" },
   grid: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(148px, 1fr))", gap: 14 },
   card: { background: "#1b2433", borderRadius: 14, overflow: "hidden", border: "1px solid #2a3448" },
